@@ -22,6 +22,8 @@
 // Or look like this
 
 # include or define or if (anything starts with #)
+# define xxx \
+  xxxx
 ```
 
 ## Function
@@ -40,5 +42,5 @@ static int func(.., .., ..) {
 # Assumptions
 - Collect comments before function declarations
 - The collecting process starts after last `#include` (in c-like languages)
-- Skip #if / #define
+- Skip #* 
 
