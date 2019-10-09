@@ -14,6 +14,19 @@ class FuncObj:
         self.func_name = None
         self.pre_comment = None 
         self.inner_comments = []
+
+    def sanitize_newline(self, string):
+        return string.replace("\n", " ")
+
+    def get_pre_comment(self):
+        if self.pre_comment is not None:
+            return self.sanitize_newline(self.pre_comment)
+        else:
+            return "" 
+
+    def get_inner_comment(self):
+        return " ".join(self.sanitize_newline(cmt) for cmt in self.inner_comments)
+
     def __str__(self):
         template = Template("""
 ============ $func_name ============
@@ -189,6 +202,9 @@ def _handle_func_body(src_f, index, log):
     return n_index, func_obj
 
 
+"""
+" Sub-entry of function_name - comments parser
+"""
 def _parse_func_comment(src, log):
     with open(src) as fd:
         src_f = fd.read()
@@ -200,12 +216,37 @@ def _parse_func_comment(src, log):
     func_objs = []
     while next_index < len(src_f):
         next_index, func_obj = _handle_func_body(src_f, next_index, log)
+        if func_obj.func_name is None:
+            continue
         func_objs.append(func_obj)
         log.debug(func_obj)
 
+    return func_objs
+
+"""
+" Entry of function_name - comments parser
+"""
 def parse_func_comment(src, log):
     if src.endswith(".c") or src.endswith(".cpp") or src.endswith(".y") or src.endswith(".h"):
-        _parse_func_comment(src, log)
+        return _parse_func_comment(src, log)
+
+
+"""
+" Write the results into csv
+"""
+def write2_csv(csv_file, func_objs):
+    fields = ["func_name", "pre_comment", "inner_comment"]
+    rows = []
+    for obj in func_objs:
+        rows.append(
+            {"func_name": obj.func_name, 
+             "pre_comment": obj.get_pre_comment(), 
+             "inner_comment": obj.get_inner_comment()
+            })
+    with open(csv_file, "w") as csvfile:
+        csvwriter = csv.DictWriter(csvfile, fieldnames=fields)
+        csvwriter.writeheader()
+        csvwriter.writerows(rows)
 
 
 def main():
@@ -216,6 +257,11 @@ def main():
     logging_group = OptionGroup(parser, "Logging Configuration")
     logging_group.add_option("-d", "--debug", dest='debug', action="store_true", help="Enable debug logging")
     parser.add_option_group(logging_group)
+
+    # CSV configuration
+    csv_group = OptionGroup(parser, "CSV Configuration")
+    csv_group.add_option("-s", "--save", dest='csv_file', action="store", help="Store to a .csv file")
+    parser.add_option_group(csv_group)
 
     (options, args) = parser.parse_args()
     if len(args) == 0:
@@ -232,15 +278,19 @@ def main():
     log = logging.getLogger("func_comment")
 
     if os.path.isfile(args[0]):
-        parse_func_comment(args[0], log)
+        func_objs = parse_func_comment(args[0], log)
     elif os.path.isdir(args[0]):
         files = sorted([os.path.join(root, file) 
                         for root, dirs, files in os.walk(args[0]) for file in files])
+        func_objs = []
         for src_file in files:
-            parse_func_comment(src_file, log)
+            func_objs += parse_func_comment(src_file, log)
     else:
         parser.error("%s not exists" % args[0])
         sys.exit(1)
+
+    if options.csv_file is not None:
+        write2_csv(options.csv_file, func_objs)
 
 if __name__ == '__main__':
     main()
