@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.7
+#!/usr/bin/env python3
 
 import sys
 import os
@@ -8,6 +8,8 @@ import json
 from optparse import OptionParser
 from optparse import OptionGroup
 from string import Template
+
+BLACK_LIST = []
 
 class CommentObj:
     def __init__(self, index=0):
@@ -110,12 +112,74 @@ def _handle_header(src_f):
             if possible_start is not None:
                 possible_start = index
             continue
+        elif "static struct" in line or "typedef struct" in line or line.startswith("struct"):
+            # Also skip structs
+            possible_start = None
+            n_index = skip_area(src_f, index)
+            continue
         else:
             break
 
     if possible_start is not None:
         return possible_start
     return index
+""" 
+" Skip comments
+"""
+def skip_comments(src_f, index):
+    n_index = index
+    while n_index < len(src_f):
+        index = n_index
+        n_index += 1
+        if "*/" in src_f[index]:
+            break
+    return n_index
+
+"""
+" Skip parts like struct {xxx}
+"""
+def skip_area(src_f, index):
+    n_index = index
+    bracket_hier = 0
+    func_started = 0
+    # return at seeing the last }
+    while n_index < len(src_f) and not (func_started != 0 and bracket_hier == 0):
+        index = n_index
+        n_index += 1
+        line = src_f[index].strip()
+
+        if len(line) == 0:
+            continue
+        elif line.startswith("#"):
+            n_index = _skip_inlines(src_f, index, n_index)
+        elif line.startswith("/*"):
+            n_index, comment = _collect_comments(src_f, index)
+        elif line.startswith("//"):
+            continue
+        elif line.startswith("@"):
+            continue
+        else:
+            if func_started == 0:
+                func_started = 1
+                # Parse function declaration
+                if "{" not in line:
+                    found = 0
+                    while True and n_index < len(src_f):
+                        index = n_index
+                        n_index += 1
+                        n_line = src_f[index].strip()
+                        line += (" " + n_line)
+                        if "{" in line:
+                            found = 1
+                            break
+                if "/*" in line:
+                    n_index = skip_comments(src_f, index)
+                elif "//" in line:
+                    continue
+            bracket_hier += line.count("{")
+            bracket_hier -= line.count("}")
+
+    return n_index
 
 
 """
@@ -156,7 +220,7 @@ def _collect_comments(src_f, index):
         line = src_f[index].strip()
         if line.startswith("* "):
             line = line.split("* ", 1)[1].strip()
-        if line.endswith("*/"):
+        if "*/" in line:
             content = "%s\n%s" % (content, line.split("*/", -1)[0])
             break
         else:
@@ -174,6 +238,7 @@ def _handle_func_body(src_f, index, log):
     n_index = index
     bracket_hier = 0
     func_started = 0
+    skip = 0
     # return at seeing the last }
     while n_index < len(src_f) and not (func_started != 0 and bracket_hier == 0):
         index = n_index
@@ -184,6 +249,8 @@ def _handle_func_body(src_f, index, log):
             continue
         elif line.startswith("#"):
             n_index = _skip_inlines(src_f, index, n_index)
+        elif line.startswith("@"):
+            continue
         elif line.startswith("/*"):
             n_index, comment = _collect_comments(src_f, index)
             if func_started == 0:
@@ -193,31 +260,47 @@ def _handle_func_body(src_f, index, log):
         elif line.startswith("//"):
             comment = line[2:]
             comment_obj = CommentObj(index + 1)
+            comment_obj.content = comment
             if bracket_hier == 0:
-                func_obj.pre_comments.append(comment)
+                func_obj.pre_comments.append(comment_obj)
             else:
-                func_obj.inner_comments.append(comment)
+                func_obj.inner_comments.append(comment_obj)
         else:
             if func_started == 0:
                 func_started = 1
                 # Parse function declaration
                 func_obj.line_no = index + 1
                 if "{" not in line:
-                    while True:
+                    found = 0
+                    while True and n_index < len(src_f):
                         index = n_index
                         n_index += 1
                         n_line = src_f[index].strip()
                         line += (" " + n_line)
                         if "{" in line:
+                            found = 1
                             break
-                func_obj.func_name = _get_func_name(line)
+                    if found == 0:
+                        return n_index, func_obj
+                src_f[index] = line
+                if "(" not in line \
+                   or " inline " in line\
+                   or "typedef struct" in line\
+                   or "static struct" in line:
+                    skip = 1
+                else:
+                    func_obj.func_name = _get_func_name(line)
                 if "/*" in line:
-                    n_index, comment = _collect_comments(src_f, index)
-                    func_obj.inner_comments.append(comment)
+                    if skip != 1:
+                        n_index, comment = _collect_comments(src_f, index)
+                        func_obj.inner_comments.append(comment)
+                    else:
+                        n_index = skip_comments(src_f, index)
                 elif "//" in line:
-                    comment = CommentObj(index + 1)
-                    comment.content = header.split("//", 1)[1]
-                    func_obj.inner_comments.append(comment)
+                    if skip != 1:
+                        comment = CommentObj(index + 1)
+                        comment.content = line.split("//", 1)[1]
+                        func_obj.inner_comments.append(comment)
             bracket_hier += line.count("{")
             bracket_hier -= line.count("}")
 
@@ -225,14 +308,20 @@ def _handle_func_body(src_f, index, log):
 
 
 """
-" Sub-entry of function_name - comments parser
+" Entry of function_name - comments parser
 """
-def _parse_func_comment(src, log):
-    with open(src) as fd:
-        src_f = fd.read()
-        src_f = src_f.splitlines()
+def parse_func_comment(src, log):
+    if src in BLACK_LIST:
+        return []
+    try:
+        with open(src) as fd:
+            src_f = fd.read()
+            src_f = src_f.splitlines()
+    except:
+        print('oops')
+        return []
     next_index = _handle_header(src_f)
-    log.debug("Starts parsing %s" % src)
+    log.info("Starts parsing %s" % src)
     log.debug("From line: %d" % next_index)
 
     func_objs = []
@@ -245,13 +334,6 @@ def _parse_func_comment(src, log):
         log.debug(func_obj)
 
     return func_objs
-
-"""
-" Entry of function_name - comments parser
-"""
-def parse_func_comment(src, log):
-    if src.endswith(".c") or src.endswith(".cpp") or src.endswith(".y") or src.endswith(".h"):
-        return _parse_func_comment(src, log)
 
 
 """
@@ -306,8 +388,9 @@ def main():
         files = sorted([os.path.join(root, file) 
                         for root, dirs, files in os.walk(args[0]) for file in files])
         func_objs = []
-        for src_file in files:
-            func_objs += parse_func_comment(src_file, log)
+        for src in files:
+            if src.endswith(".c") or src.endswith(".cpp") or src.endswith(".y") or src.endswith(".h"):
+                func_objs += parse_func_comment(src, log)
     else:
         parser.error("%s not exists" % args[0])
         sys.exit(1)
