@@ -55,3 +55,9 @@ static int func(.., .., ..) {
 - The collecting process starts after last `#include` (in c-like languages)
 - Skip #* 
 
+# Patches
+## oleo
+configure
+```
+delete 6299a6300,6472
+```
