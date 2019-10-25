@@ -9,7 +9,7 @@ from optparse import OptionParser
 from optparse import OptionGroup
 from string import Template
 
-BLACK_LIST = []
+BLACK_LIST = ["gnu_projects/cim-5.1/lib/simulation.c", "gnu_projects/cim-5.1/lib/simset.c"]
 
 class CommentObj:
     def __init__(self, index=0):
@@ -101,6 +101,7 @@ def _handle_header(src_f):
                 possible_start = None
                 n_index = _skip_inlines(src_f, index, n_index)
             else:
+                n_index = _skip_inlines(src_f, index, n_index)
                 continue
         elif line.startswith("/*"):
             possible_start = index
@@ -119,6 +120,7 @@ def _handle_header(src_f):
             continue
         else:
             break
+
 
     if possible_start is not None:
         return possible_start
@@ -204,17 +206,28 @@ def _get_func_name(func_declare):
 """
 " Get the contents of comments
 """
-def _collect_comments(src_f, index):
+def _collect_comments(src_f, index, debug=None):
     comment = CommentObj(index + 1)
     n_index = index + 1
     line = src_f[index].strip()
     content = line.split("/*", 1)[1].strip()
     if "*/" in content:
-        content = content.rsplit("*/", 1)[0]
+        content, rest = content.split("*/", 1)
+        while "/*" in rest:
+            rest = rest.split("/*", 1)[1]
+            if "*/" not in rest:
+                while n_index < len(src_f):
+                    index = n_index
+                    n_index += 1
+                    rest += ("\n" + src_f[index])
+                    if "*/" in rest:
+                        break
+            content += ("\n" + rest.split("*/", 1)[0])
+            rest = rest.split("*/", 1)[1]
         comment.content = content
         return n_index, comment
 
-    while index < len(src_f):
+    while n_index < len(src_f):
         index = n_index
         n_index += 1
         line = src_f[index].strip()
@@ -270,14 +283,17 @@ def _handle_func_body(src_f, index, log):
                 func_started = 1
                 # Parse function declaration
                 func_obj.line_no = index + 1
-                if "{" not in line:
+                if "{" not in line or ";" not in line:
                     found = 0
                     while True and n_index < len(src_f):
                         index = n_index
                         n_index += 1
                         n_line = src_f[index].strip()
+                        if n_line.startswith("#"):
+                            n_index = _skip_inlines(src_f, index, n_index)
+                            continue
                         line += (" " + n_line)
-                        if "{" in line:
+                        if "{" in line or ";" in line:
                             found = 1
                             break
                     if found == 0:
@@ -290,17 +306,19 @@ def _handle_func_body(src_f, index, log):
                     skip = 1
                 else:
                     func_obj.func_name = _get_func_name(line)
-                if "/*" in line:
-                    if skip != 1:
-                        n_index, comment = _collect_comments(src_f, index)
-                        func_obj.inner_comments.append(comment)
-                    else:
-                        n_index = skip_comments(src_f, index)
-                elif "//" in line:
-                    if skip != 1:
-                        comment = CommentObj(index + 1)
-                        comment.content = line.split("//", 1)[1]
-                        func_obj.inner_comments.append(comment)
+            if "/*" in line:
+                line = line.split("/*")[0]
+                if skip != 1:
+                    n_index, comment = _collect_comments(src_f, index)
+                    func_obj.inner_comments.append(comment)
+                else:
+                    n_index = skip_comments(src_f, index)
+            elif "//" in line:
+                if skip != 1:
+                    comment = CommentObj(index + 1)
+                    comment.content = line.split("//", 1)[1]
+                    func_obj.inner_comments.append(comment)
+                line = line.split("//")[0]
             bracket_hier += line.count("{")
             bracket_hier -= line.count("}")
 
