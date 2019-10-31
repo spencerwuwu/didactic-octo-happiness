@@ -26,7 +26,8 @@ def _run_cmd(cmd, log):
 
 def make_configure(proj_name, log):
     build_path = "to_compile/%s/" % proj_name
-    cmd = "cd %s && ./configure && CFLAGS=\"-g\" CXXFLAGS=\"-g\" make" % build_path
+    cmd = "cd %s && autoreconf -f -i; ./configure && CFLAGS=\"-g\" CXXFLAGS=\"-g\" make" % build_path
+    # cmd = "cd %s && CFLAGS=\"-g\" CXXFLAGS=\"-g\" make" % build_path
     if not _run_cmd(cmd, log):
         return "failed", build_path
     return "built", build_path
@@ -80,10 +81,12 @@ def make_all(log, prev_data=None):
                 print("%s finished" % entry)
                 log.info("%s finished" % entry)
                 continue
+            """
             elif compile_results[entry]["status"] == "failed":
                 print("%s failed before, passed" % entry)
                 log.info("%s failed before, passed" % entry)
                 continue
+            """
         result = {}
         result["proj_name"] = entry
         files = os.listdir("to_compile/%s" % entry)
